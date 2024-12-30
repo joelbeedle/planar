@@ -9,8 +9,7 @@ use winit::{
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Uniforms {
-  // We'll store aspect = width / height
-  aspect_ratio: f32,
+  aspect_ratio: f32, // aspect = width / height
 }
 
 // Generate circle vertex positions in X/Y plane, centered at (0,0).
@@ -164,31 +163,12 @@ async fn main() {
   // -------------------------------------
   // 4) Shader source
   // -------------------------------------
-  let shader_src = r#"
-struct Uniforms {
-    aspect_ratio: f32,
-}
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-
-@vertex
-fn vs_main(@location(0) position : vec3<f32>) -> @builtin(position) vec4<f32> {
-    // Adjust x by aspect ratio so circle remains truly circular.
-    let corrected_x = position.x / uniforms.aspect_ratio;
-    return vec4<f32>(corrected_x, position.y, position.z, 1.0);
-}
-
-@fragment
-fn fs_main() -> @location(0) vec4<f32> {
-    // Just draw white lines
-    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
-}
-"#;
   let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
     label: Some("Shader Module"),
-    source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+    source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
   });
 
-  // 1) Define your VertexAttribute array as a 'static
+  // 1) Define VertexAttribute array as a 'static
   static VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
     offset: 0,
     shader_location: 0,
@@ -205,12 +185,9 @@ fn fs_main() -> @location(0) vec4<f32> {
     }]
   }
   // -------------------------------------
-  // 5) Pipelines (avoid moving `vertex_layout`)
+  // 5) Pipelines
   // -------------------------------------
-  //
-  // We create separate ephemeral arrays so we don't reuse `[vertex_layout]`
-  // and cause a move error.
-  //
+
   // A) Pipeline for the circle: real line topology
   let circle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
     label: Some("Circle Pipeline Layout"),
@@ -219,14 +196,13 @@ fn fs_main() -> @location(0) vec4<f32> {
   });
 
   let circle_pipeline = {
-    // ephemeral array with 1 element
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("Circle Pipeline"),
       layout: Some(&circle_pipeline_layout),
       vertex: wgpu::VertexState {
         module: &module,
         entry_point: "vs_main",
-        buffers: &single_layout(), // Use ephemeral array
+        buffers: &single_layout(),
       },
       fragment: Some(wgpu::FragmentState {
         module: &module,
@@ -266,7 +242,7 @@ fn fs_main() -> @location(0) vec4<f32> {
       vertex: wgpu::VertexState {
         module: &module,
         entry_point: "vs_main",
-        buffers: &single_layout(), // ephemeral array
+        buffers: &single_layout(),
       },
       fragment: Some(wgpu::FragmentState {
         module: &module,
