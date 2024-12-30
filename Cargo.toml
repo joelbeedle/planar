@@ -1,0 +1,11 @@
+[package]
+name = "mpcd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winit = "0.28"
+wgpu = "0.17"
+pollster = "0.2"
+tokio = { version = "1", features = ["full"] }
+bytemuck = { version = "1.13", features = ["derive"] }
