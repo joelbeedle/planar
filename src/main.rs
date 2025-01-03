@@ -1,4 +1,3 @@
-use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use winit::{
   event::*,
@@ -6,98 +5,13 @@ use winit::{
   window::WindowBuilder,
 };
 
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct Uniforms {
-  aspect_ratio: f32,
-}
+mod geometry;
+mod shape;
+mod uniforms;
 
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct InstanceData {
-  model_matrix: [[f32; 4]; 4],
-}
-
-enum ShapeType {
-  Circle,
-  Triangle,
-}
-
-struct Shape {
-  shape_type: ShapeType,
-  position: glam::Vec3,
-  scale: f32,
-  instance_buffer: wgpu::Buffer,
-  bind_group: wgpu::BindGroup,
-}
-
-impl Shape {
-  fn new_circle(
-    device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    position: glam::Vec3,
-    scale: f32,
-  ) -> Self {
-    let instance_data = InstanceData {
-      model_matrix: (glam::Mat4::from_translation(position)
-        * glam::Mat4::from_scale(glam::Vec3::splat(scale)))
-      .to_cols_array_2d(),
-    };
-    let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label: Some("Circle Instance Buffer"),
-      contents: bytemuck::cast_slice(&[instance_data]),
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: bind_group_layout,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: instance_buffer.as_entire_binding(),
-      }],
-      label: Some("Circle Bind Group"),
-    });
-    Self {
-      shape_type: ShapeType::Circle,
-      position,
-      scale,
-      instance_buffer,
-      bind_group,
-    }
-  }
-
-  fn new_triangle(
-    device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    position: glam::Vec3,
-    scale: f32,
-  ) -> Self {
-    let instance_data = InstanceData {
-      model_matrix: (glam::Mat4::from_translation(position)
-        * glam::Mat4::from_scale(glam::Vec3::splat(scale)))
-      .to_cols_array_2d(),
-    };
-    let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label: Some("Triangle Instance Buffer"),
-      contents: bytemuck::cast_slice(&[instance_data]),
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: bind_group_layout,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: instance_buffer.as_entire_binding(),
-      }],
-      label: Some("Triangle Bind Group"),
-    });
-    Self {
-      shape_type: ShapeType::Triangle,
-      position,
-      scale,
-      instance_buffer,
-      bind_group,
-    }
-  }
-}
+use geometry::{generate_circle_indices, generate_circle_vertices};
+use shape::{Shape, ShapeType};
+use uniforms::Uniforms;
 
 #[tokio::main]
 async fn main() {
@@ -153,7 +67,7 @@ async fn main() {
   surface.configure(&device, &surface_config);
 
   // -------------------------------------
-  // Uniform Buffer and Bind Group
+  // Bind Group Layout for instances
   // -------------------------------------
   let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
     label: Some("Instance Bind Group Layout"),
@@ -168,9 +82,14 @@ async fn main() {
       count: None,
     }],
   });
+
+  // -------------------------------------
+  // Uniform Buffer and Bind Group
+  // -------------------------------------
   let mut uniforms = Uniforms {
     aspect_ratio: size.width as f32 / size.height as f32,
   };
+
   let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
     label: Some("Uniform Buffer"),
     contents: bytemuck::bytes_of(&uniforms),
@@ -200,6 +119,10 @@ async fn main() {
       resource: uniform_buffer.as_entire_binding(),
     }],
   });
+
+  // -------------------------------------
+  // Create Circle & Triangle Geometry
+  // -------------------------------------
   let circle_segments = 64;
   let circle_vertex_data = generate_circle_vertices(0.5, circle_segments);
   let circle_index_data = generate_circle_indices(circle_segments);
@@ -217,7 +140,8 @@ async fn main() {
 
   // Triangle
   let triangle_vertex_data: &[f32] = &[
-    0.0, 0.5, 0.0, -0.5, -0.5, 0.0, 0.5, -0.5, 0.0, // x, y, z
+    0.0, 0.5, 0.0, // x, y, z
+    -0.5, -0.5, 0.0, 0.5, -0.5, 0.0,
   ];
   let triangle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
     label: Some("Triangle VB"),
@@ -233,6 +157,7 @@ async fn main() {
     source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
   });
 
+  // Circle pipeline
   let circle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
     label: Some("Circle Pipeline Layout"),
     bind_group_layouts: &[&uniform_bind_group_layout, &bind_group_layout],
@@ -278,6 +203,7 @@ async fn main() {
     multiview: None,
   });
 
+  // Triangle pipeline
   let triangle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
     label: Some("Triangle Pipeline Layout"),
     bind_group_layouts: &[&uniform_bind_group_layout, &bind_group_layout],
@@ -323,13 +249,18 @@ async fn main() {
     multiview: None,
   });
 
-  // Event loop would go here for rendering shapes...
+  // -------------------------------------
+  // Create some shapes
+  // -------------------------------------
   let mut shapes: Vec<Shape> = vec![
     Shape::new_circle(&device, &bind_group_layout, glam::vec3(-0.5, 0.0, 0.0), 1.3),
     Shape::new_triangle(&device, &bind_group_layout, glam::vec3(0.5, 0.5, 0.0), 0.2),
     Shape::new_triangle(&device, &bind_group_layout, glam::vec3(0.2, 0.2, 0.0), 0.4),
   ];
 
+  // -------------------------------------
+  // Event loop
+  // -------------------------------------
   event_loop.run(move |event, _, control_flow| {
     *control_flow = ControlFlow::Poll;
 
@@ -338,6 +269,7 @@ async fn main() {
         let frame = match surface.get_current_texture() {
           Ok(frame) => frame,
           Err(_) => {
+            // Reconfigure the surface if lost
             surface.configure(&device, &surface_config);
             return;
           }
@@ -357,6 +289,7 @@ async fn main() {
           queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         }
 
+        // Start render pass
         {
           let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -376,6 +309,7 @@ async fn main() {
             depth_stencil_attachment: None,
           });
 
+          // Draw all shapes
           for shape in &shapes {
             match shape.shape_type {
               ShapeType::Circle => {
@@ -398,6 +332,7 @@ async fn main() {
           }
         }
 
+        // Submit and present
         queue.submit(Some(encoder.finish()));
         frame.present();
       }
@@ -415,37 +350,14 @@ async fn main() {
         surface_config.height = new_size.height;
         surface.configure(&device, &surface_config);
 
-        // Update aspect ratio
         uniforms.aspect_ratio = new_size.width as f32 / new_size.height as f32;
         queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
       }
       Event::MainEventsCleared => {
+        // Request a redraw
         window.request_redraw();
       }
       _ => {}
     }
   });
-}
-fn generate_circle_vertices(radius: f32, segments: usize) -> Vec<f32> {
-  let mut vertices = Vec::with_capacity(segments * 3);
-  let step = std::f32::consts::TAU / segments as f32;
-
-  for i in 0..segments {
-    let angle = step * i as f32;
-    let x = radius * angle.cos();
-    let y = radius * angle.sin();
-    vertices.push(x);
-    vertices.push(y);
-    vertices.push(0.0); // z
-  }
-  vertices
-}
-
-fn generate_circle_indices(segments: usize) -> Vec<u32> {
-  let mut indices = Vec::with_capacity(segments + 1);
-  for i in 0..segments as u32 {
-    indices.push(i);
-  }
-  indices.push(0);
-  indices
 }
